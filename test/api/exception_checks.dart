@@ -18,6 +18,11 @@ extension NetworkExceptionChecks on Subject<NetworkException> {
   Subject<Object> get cause => has((e) => e.cause, 'cause');
 }
 
+extension DrawbridgeAuthRequiredExceptionChecks on Subject<DrawbridgeAuthRequiredException> {
+  Subject<Uri> get loginUrl => has((e) => e.loginUrl, 'loginUrl');
+  Subject<String?> get rejectedCookie => has((e) => e.rejectedCookie, 'rejectedCookie');
+}
+
 extension ServerExceptionChecks on Subject<ServerException> {
   Subject<int> get httpStatus => has((e) => e.httpStatus, 'httpStatus');
   Subject<Map<String, dynamic>?> get data => has((e) => e.data, 'data');

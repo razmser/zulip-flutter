@@ -28,6 +28,7 @@ class _PreparedSuccess extends _PreparedResponse {
   final List<int> bytes;
   final Duration bodyDelay;
   final Object? bodyException;
+  final Uri? redirectedTo;
 
   _PreparedSuccess({
     super.delay,
@@ -35,7 +36,19 @@ class _PreparedSuccess extends _PreparedResponse {
     required this.bytes,
     this.bodyDelay = Duration.zero,
     this.bodyException,
+    this.redirectedTo,
   });
+}
+
+/// Like the [IOStreamedResponse] that [IOClient] produces,
+/// this knows the URL it came from after any redirects.
+class _FakeStreamedResponse extends http.StreamedResponse
+    implements http.BaseResponseWithUrl {
+  _FakeStreamedResponse(super.stream, super.statusCode,
+    {super.request, required this.url});
+
+  @override
+  final Uri url;
 }
 
 /// An [http.Client] that accepts and replays canned responses, for testing.
@@ -74,12 +87,17 @@ class FakeHttpClient extends http.BaseClient {
   /// after emitting the body's bytes,
   /// like when a network connection fails partway through
   /// receiving the response body.
+  ///
+  /// If `redirectedTo` is non-null, then `exception` must be null,
+  /// and the response will be as if the client had followed redirects
+  /// to that URL, like [IOClient] does.
   void prepare({
     Object? exception,
     int? httpStatus,
     Map<String, dynamic>? json,
     String? body,
     Object? bodyException,
+    Uri? redirectedTo,
     Duration delay = Duration.zero,
     Duration bodyDelay = Duration.zero,
   }) {
@@ -87,7 +105,8 @@ class FakeHttpClient extends http.BaseClient {
     //   prepared responses when the test ends.
     if (exception != null) {
       assert(httpStatus == null && json == null && body == null
-        && bodyException == null && bodyDelay == Duration.zero);
+        && bodyException == null && redirectedTo == null
+        && bodyDelay == Duration.zero);
       _preparedResponses.addLast(_PreparedException(exception: exception, delay: delay));
     } else {
       assert((json == null) || (body == null));
@@ -100,6 +119,7 @@ class FakeHttpClient extends http.BaseClient {
         httpStatus: httpStatus ?? 200,
         bytes: utf8.encode(resolvedBody),
         bodyException: bodyException,
+        redirectedTo: redirectedTo,
         delay: delay,
         bodyDelay: bodyDelay,
       ));
@@ -133,11 +153,12 @@ class FakeHttpClient extends http.BaseClient {
       case _PreparedException(:var exception):
         computation = () => throw exception;
       case _PreparedSuccess(:var bytes, :var httpStatus, :var bodyDelay,
-                            :var bodyException):
-        computation = () => http.StreamedResponse(
+                            :var bodyException, :var redirectedTo):
+        computation = () => _FakeStreamedResponse(
           _bodyStream(request, bytes: bytes, bodyDelay: bodyDelay,
             bodyException: bodyException, abortTrigger: abortTrigger),
-          httpStatus, request: request);
+          httpStatus, request: request,
+          url: redirectedTo ?? request.url);
     }
     final result = Future.delayed(response.delay, computation);
     if (abortTrigger == null) return result;
@@ -207,12 +228,14 @@ class FakeApiConnection extends ApiConnection {
     int? zulipFeatureLevel = eg.futureZulipFeatureLevel,
     String? email,
     String? apiKey,
+    String? Function()? drawbridgeCookie,
     bool useBinding = false,
   }) : this._(
          realmUrl: realmUrl ?? eg.realmUrl,
          zulipFeatureLevel: zulipFeatureLevel,
          email: email,
          apiKey: apiKey,
+         drawbridgeCookie: drawbridgeCookie,
          client: FakeHttpClient(),
          useBinding: useBinding,
        );
@@ -230,6 +253,7 @@ class FakeApiConnection extends ApiConnection {
     required super.zulipFeatureLevel,
     super.email,
     super.apiKey,
+    super.drawbridgeCookie,
     required this.client,
     required super.useBinding,
   }) : super(client: client);
@@ -311,6 +335,10 @@ class FakeApiConnection extends ApiConnection {
   /// the given exception after emitting the body's bytes,
   /// like when a network connection fails partway through
   /// receiving the response body.
+  ///
+  /// If `redirectedTo` is non-null, then `httpException` and `apiException`
+  /// must be null, and the response will be as if the HTTP client
+  /// had followed redirects to that URL.
   void prepare({
     Object? httpException,
     ZulipApiException? apiException,
@@ -318,6 +346,7 @@ class FakeApiConnection extends ApiConnection {
     Map<String, dynamic>? json,
     String? body,
     Object? bodyException,
+    Uri? redirectedTo,
     Duration delay = Duration.zero,
     Duration bodyDelay = Duration.zero,
   }) {
@@ -343,7 +372,8 @@ class FakeApiConnection extends ApiConnection {
 
     if (apiException != null) {
       assert(httpException == null && bodyException == null
-        && httpStatus == null && json == null && body == null);
+        && httpStatus == null && json == null && body == null
+        && redirectedTo == null);
       httpStatus = apiException.httpStatus;
       json = {
         'result': 'error',
@@ -356,7 +386,7 @@ class FakeApiConnection extends ApiConnection {
     client.prepare(
       exception: httpException,
       httpStatus: httpStatus, json: json, body: body,
-      bodyException: bodyException,
+      bodyException: bodyException, redirectedTo: redirectedTo,
       delay: delay, bodyDelay: bodyDelay,
     );
   }

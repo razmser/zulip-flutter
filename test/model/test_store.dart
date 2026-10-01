@@ -60,7 +60,8 @@ mixin _ApiConnectionsMixin on GlobalStore {
     }
     return (_apiConnections[key] = FakeApiConnection(
       realmUrl: realmUrl, zulipFeatureLevel: zulipFeatureLevel,
-      email: email, apiKey: apiKey));
+      email: email, apiKey: apiKey,
+      drawbridgeCookie: () => drawbridgeCookie(realmUrl)));
   }
 }
 

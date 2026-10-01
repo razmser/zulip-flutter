@@ -423,6 +423,31 @@ class ZulipLocalizationsSk extends ZulipLocalizations {
   }
 
   @override
+  String errorDrawbridgeAuthRequired(String host) {
+    return 'Sign-in to $host required.';
+  }
+
+  @override
+  String drawbridgeLoginPageTitle(String host) {
+    return 'Sign in to $host';
+  }
+
+  @override
+  String get drawbridgeSessionExpiredTitle => 'Sign-in expired';
+
+  @override
+  String drawbridgeSessionExpiredMessage(String url) {
+    return 'Sign in again to keep using $url.';
+  }
+
+  @override
+  String get drawbridgeSignInButton => 'Sign in';
+
+  @override
+  String get drawbridgeErrorPasskeysUnsupported =>
+      'This server is protected by a sign-in with passkeys, which needs Android 14 or later and an up-to-date Android System WebView.';
+
+  @override
   String get errorCouldNotConnectTitle => 'Could not connect';
 
   @override

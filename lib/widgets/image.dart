@@ -13,7 +13,7 @@ import 'store.dart';
 ///
 /// If [src] is an on-realm URL (it has the same origin as the ambient
 /// [Auth.realmUrl]), then an HTTP request to fetch the image will include the
-/// user's [authHeader].
+/// user's [authHeader], and any [ApiConnection.drawbridgeCookieHeader].
 ///
 /// If [src] is off-realm (e.g., a Gravatar URL), no auth header will be sent.
 ///
@@ -74,7 +74,8 @@ class RealmContentNetworkImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final account = PerAccountStoreWidget.of(context).account;
+    final store = PerAccountStoreWidget.of(context);
+    final account = store.account;
 
     return Image.network(
       src.toString(),
@@ -100,9 +101,10 @@ class RealmContentNetworkImage extends StatelessWidget {
       isAntiAlias: isAntiAlias,
       headers: {
         // Only send the auth header to the server `auth` belongs to.
-        if (src.origin == account.realmUrl.origin) ...authHeader(
-          email: account.email, apiKey: account.apiKey,
-        ),
+        if (src.origin == account.realmUrl.origin) ...{
+          ...authHeader(email: account.email, apiKey: account.apiKey),
+          ...store.connection.drawbridgeCookieHeader(),
+        },
         ...userAgentHeader(),
       },
       cacheWidth: cacheWidth,

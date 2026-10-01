@@ -91,6 +91,36 @@ class NetworkException extends ApiRequestException {
   }
 }
 
+/// The request was turned away by a Drawbridge reverse proxy
+/// in front of the Zulip server,
+/// because there's no valid Drawbridge session.
+///
+/// Drawbridge answers such a GET request with a redirect to its login page;
+/// see [ApiConnection.send].
+/// The session cookie is obtained by signing in at [loginUrl]
+/// and is then sent by [ApiConnection] as [kDrawbridgeSessionCookieName].
+///
+/// See: https://github.com/CoreInfraAI/drawbridge
+class DrawbridgeAuthRequiredException extends ApiRequestException {
+  /// The Drawbridge login page, including its `next` parameter.
+  final Uri loginUrl;
+
+  /// The session cookie value that was sent and turned away, if any.
+  final String? rejectedCookie;
+
+  DrawbridgeAuthRequiredException({
+    required super.routeName,
+    required this.loginUrl,
+    required this.rejectedCookie,
+  }) : super(message: GlobalLocalizations.zulipLocalizations
+         .errorDrawbridgeAuthRequired(loginUrl.host));
+
+  @override
+  String toString() {
+    return 'DrawbridgeAuthRequiredException: $loginUrl';
+  }
+}
+
 /// Some kind of [ApiRequestException] that came as an HTTP response.
 ///
 /// This is the antonym of [NetworkException].

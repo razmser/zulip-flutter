@@ -838,6 +838,42 @@ abstract class ZulipLocalizations {
   /// **'Failed to connect to server:\n{url}'**
   String errorLoginCouldNotConnect(String url);
 
+  /// Error message when a request to the server was turned away by a Drawbridge authenticating proxy, because the user isn't signed in to it.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in to {host} required.'**
+  String errorDrawbridgeAuthRequired(String host);
+
+  /// Title for the page showing the login page of a Drawbridge authenticating proxy in front of the Zulip server.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to {host}'**
+  String drawbridgeLoginPageTitle(String host);
+
+  /// Title for dialog when the user's session with a Drawbridge authenticating proxy in front of the Zulip server has expired.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in expired'**
+  String get drawbridgeSessionExpiredTitle;
+
+  /// Message for dialog when the user's session with a Drawbridge authenticating proxy in front of the Zulip server has expired.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again to keep using {url}.'**
+  String drawbridgeSessionExpiredMessage(String url);
+
+  /// Button in dialog to sign in again to a Drawbridge authenticating proxy in front of the Zulip server.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in'**
+  String get drawbridgeSignInButton;
+
+  /// Error message when the device can't sign in to a Drawbridge authenticating proxy in front of the Zulip server, because its WebView doesn't support passkeys.
+  ///
+  /// In en, this message translates to:
+  /// **'This server is protected by a sign-in with passkeys, which needs Android 14 or later and an up-to-date Android System WebView.'**
+  String get drawbridgeErrorPasskeysUnsupported;
+
   /// Error title when the app could not connect to the server.
   ///
   /// In en, this message translates to:

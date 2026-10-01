@@ -12,6 +12,7 @@ import '../model/store.dart';
 import '../notifications/open.dart';
 import 'about_zulip.dart';
 import 'dialog.dart';
+import 'drawbridge.dart';
 import 'home.dart';
 import 'login.dart';
 import 'page.dart';
@@ -98,6 +99,7 @@ class ZulipApp extends StatefulWidget {
     _snackBarCount = 0;
     reportErrorToUserBriefly = defaultReportErrorToUserBriefly;
     reportErrorToUserModally = defaultReportErrorToUserModally;
+    drawbridgeSignIn = defaultDrawbridgeSignIn;
     _ready.dispose();
     _ready = ValueNotifier(false);
   }
@@ -161,6 +163,7 @@ class ZulipApp extends StatefulWidget {
     _ready.value = true;
     reportErrorToUserBriefly = _reportErrorToUserBriefly;
     reportErrorToUserModally = _reportErrorToUserModally;
+    drawbridgeSignIn = showDrawbridgeSignIn;
   }
 
   @override

@@ -503,6 +503,10 @@ class _VideoLightboxPageState extends State<VideoLightboxPage> with PerAccountSt
 
     assert(debugLog('VideoPlayerController.networkUrl(${widget.src})'));
     _controller = VideoPlayerController.networkUrl(widget.src, httpHeaders: {
+      // TODO(drawbridge) Video behind Drawbridge is unsupported:
+      //   we don't send its session cookie here, because the player
+      //   re-sends these headers when following a redirect to another origin,
+      //   and the cookie grants access to every service behind Drawbridge.
       if (widget.src.origin == store.account.realmUrl.origin) ...authHeader(
         email: store.account.email,
         apiKey: store.account.apiKey,

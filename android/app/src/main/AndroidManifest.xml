@@ -4,6 +4,9 @@
        https://developer.android.com/build/manage-manifests#inspect_the_merged_manifest_and_find_conflicts -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
    <uses-permission android:name="android.permission.INTERNET"/>
+   <!-- Lets the Drawbridge sign-in WebView assert the web origin to
+        Credential Manager, for passkeys; see lib/widgets/drawbridge.dart. -->
+   <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_SET_ORIGIN"/>
    <application
         android:label="Zulip"
         android:name="${applicationName}"

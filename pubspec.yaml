@@ -68,6 +68,8 @@ dependencies:
   url_launcher_android: ">=6.1.0"
   video_player: ^2.10.0
   wakelock_plus: ^1.2.8
+  webview_flutter: ^4.14.0
+  webview_flutter_android: ^4.14.0
   zulip_plugin:
     path: ./packages/zulip_plugin
   # Keep list sorted when adding dependencies; it helps prevent merge conflicts.

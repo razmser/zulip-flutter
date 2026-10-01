@@ -497,6 +497,39 @@
       "url": {"type": "String", "example": "http://example.com/"}
     }
   },
+  "errorDrawbridgeAuthRequired": "Sign-in to {host} required.",
+  "@errorDrawbridgeAuthRequired": {
+    "description": "Error message when a request to the server was turned away by a Drawbridge authenticating proxy, because the user isn't signed in to it.",
+    "placeholders": {
+      "host": {"type": "String", "example": "drawbridge.example.com"}
+    }
+  },
+  "drawbridgeLoginPageTitle": "Sign in to {host}",
+  "@drawbridgeLoginPageTitle": {
+    "description": "Title for the page showing the login page of a Drawbridge authenticating proxy in front of the Zulip server.",
+    "placeholders": {
+      "host": {"type": "String", "example": "drawbridge.example.com"}
+    }
+  },
+  "drawbridgeSessionExpiredTitle": "Sign-in expired",
+  "@drawbridgeSessionExpiredTitle": {
+    "description": "Title for dialog when the user's session with a Drawbridge authenticating proxy in front of the Zulip server has expired."
+  },
+  "drawbridgeSessionExpiredMessage": "Sign in again to keep using {url}.",
+  "@drawbridgeSessionExpiredMessage": {
+    "description": "Message for dialog when the user's session with a Drawbridge authenticating proxy in front of the Zulip server has expired.",
+    "placeholders": {
+      "url": {"type": "String", "example": "https://chat.example.com/"}
+    }
+  },
+  "drawbridgeSignInButton": "Sign in",
+  "@drawbridgeSignInButton": {
+    "description": "Button in dialog to sign in again to a Drawbridge authenticating proxy in front of the Zulip server."
+  },
+  "drawbridgeErrorPasskeysUnsupported": "This server is protected by a sign-in with passkeys, which needs Android 14 or later and an up-to-date Android System WebView.",
+  "@drawbridgeErrorPasskeysUnsupported": {
+    "description": "Error message when the device can't sign in to a Drawbridge authenticating proxy in front of the Zulip server, because its WebView doesn't support passkeys."
+  },
   "errorCouldNotConnectTitle": "Could not connect",
   "@errorCouldNotConnectTitle": {
     "description": "Error title when the app could not connect to the server."

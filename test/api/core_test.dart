@@ -95,6 +95,141 @@ void main() {
     });
   });
 
+  group('Drawbridge', () {
+    final realmUrl = Uri.parse('https://chat.example.com/');
+    final loginUrl = Uri.parse('https://drawbridge.example.com/login'
+      '?next=${Uri.encodeQueryComponent(
+        'https://chat.example.com/api/v1/example/route')}');
+
+    Future<T> withConnection<T>(
+      Future<T> Function(FakeApiConnection connection) fn, {
+      String? Function()? drawbridgeCookie,
+    }) async {
+      final connection = FakeApiConnection(realmUrl: realmUrl,
+        drawbridgeCookie: drawbridgeCookie);
+      try {
+        return await fn(connection);
+      } finally {
+        connection.close();
+      }
+    }
+
+    test('session cookie sent to realm', () async {
+      String? cookie = 'session1';
+      await withConnection(drawbridgeCookie: () => cookie, (connection) async {
+        connection.prepare(json: {});
+        await connection.get(kExampleRouteName, (json) => json, 'example/route', {});
+        check(connection.takeRequests()).single.headers['Cookie']
+          .equals('drawbridge_session=session1');
+
+        cookie = 'session2';
+        connection.prepare(json: {});
+        await connection.send(kExampleRouteName, (json) => json, useAuth: false,
+          http.Request('GET', realmUrl.resolve('/api/v1/server_settings')));
+        check(connection.takeRequests()).single.headers['Cookie']
+          .equals('drawbridge_session=session2');
+      });
+    });
+
+    test('no cookie header without session', () async {
+      await withConnection(drawbridgeCookie: () => null, (connection) async {
+        connection.prepare(json: {});
+        await connection.get(kExampleRouteName, (json) => json, 'example/route', {});
+        check(connection.takeRequests()).single.headers.not(
+          (it) => it.containsKey('Cookie'));
+      });
+    });
+
+    test('redirect to login page throws DrawbridgeAuthRequiredException', () async {
+      await withConnection(drawbridgeCookie: () => 'expired', (connection) async {
+        connection.prepare(redirectedTo: loginUrl,
+          body: '<!doctype html><title>Drawbridge Login</title>');
+        await check(connection.get(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .throws<DrawbridgeAuthRequiredException>((it) => it
+            ..routeName.equals(kExampleRouteName)
+            ..loginUrl.equals(loginUrl)
+            ..rejectedCookie.equals('expired'));
+      });
+    });
+
+    test('plain 401 on POST: probe finds login page', () async {
+      await withConnection(drawbridgeCookie: () => 'expired', (connection) async {
+        connection.prepare(httpStatus: 401, body: 'Unauthorized\n');
+        connection.prepare(redirectedTo: loginUrl, body: '<html></html>');
+        await check(connection.post(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .throws<DrawbridgeAuthRequiredException>((it) => it
+            ..routeName.equals(kExampleRouteName)
+            ..loginUrl.equals(loginUrl)
+            ..rejectedCookie.equals('expired'));
+        check(connection.takeRequests()).deepEquals(<Condition<Object?>>[
+          (it) => it.isA<http.Request>()
+            ..method.equals('POST')
+            ..url.path.equals('/api/v1/example/route'),
+          (it) => it.isA<http.Request>()
+            ..method.equals('GET')
+            ..url.equals(realmUrl)
+            ..headers['Cookie'].equals('$kDrawbridgeSessionCookieName=expired'),
+        ]);
+      });
+    });
+
+    test('plain 401 without Drawbridge: usual exception', () async {
+      await withConnection((connection) async {
+        connection.prepare(httpStatus: 401, body: 'Unauthorized\n');
+        connection.prepare(body: '<html></html>');
+        await check(connection.post(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .throws<MalformedServerResponseException>((it) => it
+            .httpStatus.equals(401));
+        check(connection.takeRequests()).length.equals(2);
+      });
+    });
+
+    test('Zulip 401 with JSON body: no probe', () async {
+      await withConnection((connection) async {
+        connection.prepare(httpStatus: 401, json: {
+          'result': 'error', 'code': 'UNAUTHORIZED', 'msg': 'Invalid API key'});
+        await check(connection.post(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .throws<ZulipApiException>((it) => it.httpStatus.equals(401));
+        check(connection.takeRequests()).single.method.equals('POST');
+      });
+    });
+
+    test('no DrawbridgeAuthRequiredException for other redirects', () async {
+      await withConnection((connection) async {
+        connection.prepare(json: {'result': 'success'},
+          redirectedTo: Uri.parse('https://other.example.com/api/v1/example/route'));
+        await check(connection.get(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .completes();
+
+        connection.prepare(json: {'result': 'success'},
+          redirectedTo: realmUrl.resolve('/login?next=%2F'));
+        await check(connection.get(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .completes();
+
+        // A login page with a relative `next`.
+        connection.prepare(json: {'result': 'success'},
+          redirectedTo: Uri.parse('https://drawbridge.example.com/login?next=%2F'));
+        await check(connection.get(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .completes();
+
+        // A login page that wouldn't send the user back to the realm.
+        connection.prepare(json: {'result': 'success'},
+          redirectedTo: Uri.parse('https://drawbridge.example.com/login'
+            '?next=https%3A%2F%2Fevil.example.com%2F'));
+        await check(connection.get(kExampleRouteName, (json) => json,
+            'example/route', {}))
+          .completes();
+      });
+    });
+  });
+
   test('ApiConnection.get', () async {
     void checkRequest(Map<String, dynamic>? params, String expectedRelativeUrl) {
       finish(FakeApiConnection.with_(account: eg.selfAccount, (connection) async {

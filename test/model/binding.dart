@@ -78,6 +78,7 @@ class TestZulipBinding extends ZulipBinding {
     _resetCanLaunchUrl();
     _resetLaunchUrl();
     _resetCloseInAppWebView();
+    _resetWebViewCookies();
     _resetAppLifecycleStateChanges();
     _resetConnectivity();
     _resetDeviceInfo();
@@ -251,6 +252,24 @@ class TestZulipBinding extends ZulipBinding {
   @override
   Future<void> closeInAppWebView() async {
     _closeInAppWebViewCallCount++;
+  }
+
+  /// The cookies `ZulipBinding.instance.getWebViewCookie` should find,
+  /// keyed by origin and then by cookie name.
+  Map<String, Map<String, String>> webViewCookies = {};
+
+  /// Called on each `ZulipBinding.instance.getWebViewCookie` call.
+  void Function()? onGetWebViewCookie;
+
+  void _resetWebViewCookies() {
+    webViewCookies = {};
+    onGetWebViewCookie = null;
+  }
+
+  @override
+  Future<String?> getWebViewCookie(Uri url, String name) async {
+    onGetWebViewCookie?.call();
+    return webViewCookies[url.origin]?[name];
   }
 
   @override

@@ -89,6 +89,27 @@ abstract class GlobalStoreBackend {
   Future<void> doRemovePushKey(int pushKeyId);
 }
 
+/// Show the user how to sign in to the Drawbridge proxy in front of [realmUrl],
+/// starting from the login page at [loginUrl].
+///
+/// Completes with the new session cookie value,
+/// or null if the user didn't sign in.
+///
+/// See [GlobalStore.ensureDrawbridgeSession].
+typedef DrawbridgeSignInCallback = Future<String?> Function(
+  Uri realmUrl, Uri loginUrl, {required bool promptFirst});
+
+/// The callback [GlobalStore.ensureDrawbridgeSession] uses
+/// to have the user sign in to Drawbridge.
+///
+/// The UI sets this once it's ready to show the login page;
+/// until then, sign-in attempts complete with null.
+DrawbridgeSignInCallback drawbridgeSignIn = defaultDrawbridgeSignIn;
+
+Future<String?> defaultDrawbridgeSignIn(Uri realmUrl, Uri loginUrl, {
+  required bool promptFirst,
+}) async => null;
+
 /// Store for all the user's data.
 ///
 /// From UI code, use [GlobalStoreWidget.of] to get hold of an appropriate
@@ -175,6 +196,102 @@ abstract class GlobalStore extends ChangeNotifier {
     return apiConnection(
       realmUrl: account.realmUrl, zulipFeatureLevel: account.zulipFeatureLevel,
       email: account.email, apiKey: account.apiKey);
+  }
+
+  //|//////////////////////////////////////////////////////////////
+  // Drawbridge sessions.
+  //
+
+  /// The Drawbridge session cookie values we know of, keyed by realm origin.
+  ///
+  /// These persist in the WebView cookie store, not here;
+  /// see [ensureDrawbridgeSession].
+  final Map<String, String> _drawbridgeCookies = {};
+
+  /// The Drawbridge session cookie value to send to [realmUrl], if any.
+  ///
+  /// [apiConnection] implementations should pass this to their [ApiConnection].
+  ///
+  /// See [DrawbridgeAuthRequiredException].
+  String? drawbridgeCookie(Uri realmUrl) => _drawbridgeCookies[realmUrl.origin];
+
+  final Map<String, Future<bool>> _drawbridgeSessionAttempts = {};
+
+  /// When the user last declined to sign in, keyed by realm origin.
+  final Map<String, DateTime> _drawbridgePromptsDeclined = {};
+
+  static const _drawbridgeDeclinedQuietPeriod = Duration(minutes: 5);
+
+  /// Try to get a new Drawbridge session for [realmUrl],
+  /// after a request there failed with [exception].
+  ///
+  /// Completes with true if there's now a session cookie
+  /// other than the one that was turned away,
+  /// so that the request is worth retrying.
+  ///
+  /// If the session was already renewed since that request,
+  /// this completes with true right away.
+  /// This first looks in the WebView cookie store,
+  /// where the session from an earlier sign-in persists across app restarts.
+  /// Failing that, it asks the user to sign in, via [drawbridgeSignIn].
+  /// With [promptFirst], the user is asked whether to sign in
+  /// before seeing the login page; if they decline,
+  /// they won't be asked that again for this realm for a few minutes.
+  ///
+  /// Concurrent calls for the same realm share a single attempt.
+  Future<bool> ensureDrawbridgeSession(
+    Uri realmUrl,
+    DrawbridgeAuthRequiredException exception, {
+    required bool promptFirst,
+  }) async {
+    final origin = realmUrl.origin;
+    final current = _drawbridgeCookies[origin];
+    if (current != null && current != exception.rejectedCookie) return true;
+    final pending = _drawbridgeSessionAttempts[origin];
+    if (pending != null) return pending;
+    final attempt = _ensureDrawbridgeSession(realmUrl, exception,
+      promptFirst: promptFirst);
+    _drawbridgeSessionAttempts[origin] = attempt;
+    return attempt.whenComplete(() => _drawbridgeSessionAttempts.remove(origin));
+  }
+
+  Future<bool> _ensureDrawbridgeSession(
+    Uri realmUrl,
+    DrawbridgeAuthRequiredException exception, {
+    required bool promptFirst,
+  }) async {
+    final origin = realmUrl.origin;
+    final rejected = exception.rejectedCookie;
+
+    String? stored;
+    try {
+      stored = await ZulipBinding.instance.getWebViewCookie(
+        realmUrl, kDrawbridgeSessionCookieName);
+    } catch (e) {
+      assert(debugLog('Error reading WebView cookies: $e')); // TODO(log)
+    }
+    if (stored != null && stored != rejected) {
+      _drawbridgeCookies[origin] = stored;
+      return true;
+    }
+
+    final declined = _drawbridgePromptsDeclined[origin];
+    if (promptFirst && declined != null
+        && ZulipBinding.instance.utcNow().difference(declined)
+             < _drawbridgeDeclinedQuietPeriod) {
+      return false;
+    }
+    final signedIn = await drawbridgeSignIn(realmUrl, exception.loginUrl,
+      promptFirst: promptFirst);
+    if (signedIn == null) {
+      if (promptFirst) {
+        _drawbridgePromptsDeclined[origin] = ZulipBinding.instance.utcNow();
+      }
+      return false;
+    }
+    _drawbridgePromptsDeclined.remove(origin);
+    _drawbridgeCookies[origin] = signedIn;
+    return true;
   }
 
   //|//////////////////////////////////////////////////////////////
@@ -285,7 +402,9 @@ abstract class GlobalStore extends ChangeNotifier {
           // and we can revisit that later if needed.
           await logOutAccount(this, accountId);
           throw AccountNotFoundException();
-        case HttpException(httpStatus: 401):
+        case ZulipApiException(httpStatus: 401):
+          // (A 401 without Zulip's JSON body, as from a proxy like Drawbridge,
+          // says nothing about the API key.)
           // The API key is invalid and the store can never be loaded
           // unless the user retries manually.
           reportErrorToUserModally(
@@ -1198,7 +1317,8 @@ class LiveGlobalStore extends GlobalStore {
       String? email, String? apiKey}) {
     return ApiConnection.live(
       realmUrl: realmUrl, zulipFeatureLevel: zulipFeatureLevel,
-      email: email, apiKey: apiKey);
+      email: email, apiKey: apiKey,
+      drawbridgeCookie: () => drawbridgeCookie(realmUrl));
   }
 
   // We keep the API simple and synchronous for the bulk of the app's code
@@ -1459,7 +1579,7 @@ class UpdateMachine {
     final stopwatch = Stopwatch()..start();
     InitialSnapshot? initialSnapshot;
     try {
-      initialSnapshot = await _registerQueueWithRetry(connection,
+      initialSnapshot = await _registerQueueWithRetry(globalStore, connection,
         stopAndThrowIfNoAccount: stopAndThrowIfNoAccount);
     } on ServerVersionNotAllowedException catch (e) {
       // `!` is OK because _registerQueueWithRetry would have thrown a
@@ -1510,6 +1630,7 @@ class UpdateMachine {
   ///
   /// After each async gap, calls [stopAndThrowIfNoAccount].
   static Future<InitialSnapshot> _registerQueueWithRetry(
+    GlobalStore globalStore,
     ApiConnection connection, {
     required void Function() stopAndThrowIfNoAccount,
   }) async {
@@ -1527,10 +1648,15 @@ class UpdateMachine {
             when (zulipVersionData = ZulipVersionData.fromMalformedServerResponseException(e))
               ?.isNotAllowed == true:
             throw ServerVersionNotAllowedException(zulipVersionData!);
-          case HttpException(httpStatus: 401):
+          case ZulipApiException(httpStatus: 401):
             // We cannot recover from this error through retrying.
             // Leave it to [GlobalStore.loadPerAccount].
             rethrow;
+          case DrawbridgeAuthRequiredException():
+            final renewed = await globalStore.ensureDrawbridgeSession(
+              connection.realmUrl, e, promptFirst: true);
+            stopAndThrowIfNoAccount();
+            if (renewed) continue;
           default:
             assert(debugLog('Error fetching initial snapshot: $e'));
             // Print stack trace in its own log entry; log entries are truncated
@@ -1932,6 +2058,14 @@ class UpdateMachine {
 
       case ZulipApiException(code: 'BAD_EVENT_QUEUE_ID'):
         Error.throwWithStackTrace(error, stackTrace);
+
+      case DrawbridgeAuthRequiredException():
+        // The Drawbridge session expired; the event queue may well be fine.
+        final renewed = await store._globalStore.ensureDrawbridgeSession(
+          store.realmUrl, error, promptFirst: true);
+        if (_disposed) return;
+        if (renewed) return; // Retry right away.
+        shouldReportToUser = false;
 
       case ZulipApiException():
       case MalformedServerResponseException():

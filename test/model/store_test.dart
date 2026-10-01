@@ -490,6 +490,113 @@ void main() {
     }));
   });
 
+  group('GlobalStore.ensureDrawbridgeSession', () {
+    final realmUrl = Uri.parse('https://chat.example.com/');
+    final loginUrl = Uri.parse('https://drawbridge.example.com/login'
+      '?next=${Uri.encodeQueryComponent(realmUrl.toString())}');
+
+    late TestGlobalStore globalStore;
+    late List<bool> signInCalls;
+    late Completer<String?> signInResult;
+
+    void prepare() {
+      addTearDown(testBinding.reset);
+      globalStore = eg.globalStore();
+      signInCalls = [];
+      signInResult = Completer();
+      drawbridgeSignIn = (url, login, {required promptFirst}) {
+        check(url).equals(realmUrl);
+        check(login).equals(loginUrl);
+        signInCalls.add(promptFirst);
+        return signInResult.future;
+      };
+    }
+
+    void setWebViewCookie(String value) {
+      testBinding.webViewCookies[realmUrl.origin] = {
+        kDrawbridgeSessionCookieName: value};
+    }
+
+    Future<bool> ensure({String? rejected, required bool promptFirst}) {
+      return globalStore.ensureDrawbridgeSession(realmUrl,
+        DrawbridgeAuthRequiredException(routeName: 'someRoute',
+          loginUrl: loginUrl, rejectedCookie: rejected),
+        promptFirst: promptFirst);
+    }
+
+    test('use session from WebView cookie store, without sign-in', () async {
+      prepare();
+      setWebViewCookie('stored');
+      check(await ensure(promptFirst: true)).isTrue();
+      check(signInCalls).isEmpty();
+      check(globalStore.drawbridgeCookie(realmUrl)).equals('stored');
+    });
+
+    test('sign in when WebView cookie store has no session', () async {
+      prepare();
+      final future = ensure(promptFirst: false);
+      await null;
+      check(signInCalls).deepEquals([false]);
+      signInResult.complete('new');
+      check(await future).isTrue();
+      check(globalStore.drawbridgeCookie(realmUrl)).equals('new');
+    });
+
+    test('sign in when stored session was the one turned away', () async {
+      prepare();
+      setWebViewCookie('stale');
+      check(await ensure(promptFirst: true)).isTrue();
+      check(signInCalls).isEmpty();
+
+      signInResult.complete('new');
+      check(await ensure(rejected: 'stale', promptFirst: true)).isTrue();
+      check(signInCalls).deepEquals([true]);
+      check(globalStore.drawbridgeCookie(realmUrl)).equals('new');
+    });
+
+    test('no sign-in when session already renewed since the request', () async {
+      prepare();
+      signInResult.complete('new');
+      check(await ensure(rejected: 'old', promptFirst: true)).isTrue();
+      check(signInCalls).deepEquals([true]);
+
+      // A request sent with the old session fails after the renewal.
+      check(await ensure(rejected: 'old', promptFirst: true)).isTrue();
+      check(signInCalls).deepEquals([true]);
+      check(globalStore.drawbridgeCookie(realmUrl)).equals('new');
+    });
+
+    test('concurrent calls share one sign-in', () async {
+      prepare();
+      final future1 = ensure(promptFirst: true);
+      final future2 = ensure(promptFirst: true);
+      signInResult.complete('new');
+      check(await future1).isTrue();
+      check(await future2).isTrue();
+      check(signInCalls).single.isTrue();
+    });
+
+    test('no re-prompt for a while after user declines', () => awaitFakeAsync((async) async {
+      prepare();
+      signInResult.complete(null);
+      check(await ensure(promptFirst: true)).isFalse();
+      check(signInCalls).deepEquals([true]);
+      check(globalStore.drawbridgeCookie(realmUrl)).isNull();
+
+      async.elapse(const Duration(minutes: 4));
+      check(await ensure(promptFirst: true)).isFalse();
+      check(signInCalls).deepEquals([true]);
+
+      // Signing in without a prompt, as when adding an account, still works.
+      check(await ensure(promptFirst: false)).isFalse();
+      check(signInCalls).deepEquals([true, false]);
+
+      async.elapse(const Duration(minutes: 1));
+      check(await ensure(promptFirst: true)).isFalse();
+      check(signInCalls).deepEquals([true, false, true]);
+    }));
+  });
+
   group('GlobalStore.removeAccount', () {
     void checkGlobalStore(GlobalStore store, int accountId, {
       required bool expectAccount,
@@ -683,6 +790,58 @@ void main() {
       updateMachine.debugPauseLoop();
       check(complete).isTrue();
       // checkLastRequest(); TODO UpdateMachine.debugPauseLoop was too late; see comment above
+      check(updateMachine.store.allUsers).unorderedMatches(
+        users.map((expected) => (it) => it.fullName.equals(expected.fullName)));
+    }));
+
+    test('plain 401 with failed Drawbridge probe: retry, no logout', () => awaitFakeAsync((async) async {
+      await prepareStore();
+
+      globalStore.useCachedApiConnections = true;
+      connection.prepare(httpStatus: 401, body: 'Unauthorized\n');
+      connection.prepare(httpException: const SocketException('failed'));
+      final future = UpdateMachine.load(globalStore, eg.selfAccount.id);
+      async.elapse(Duration.zero);
+      check(connection.takeRequests()).length.equals(2);
+
+      // After a timer, we retry.
+      final users = [eg.selfUser, eg.otherUser];
+      connection.prepare(json: eg.initialSnapshot(realmUsers: users).toJson());
+      final updateMachine = await future;
+      updateMachine.debugPauseLoop();
+      check(globalStore.getAccount(eg.selfAccount.id)).isNotNull();
+    }));
+
+    test('retries registerQueue right away after Drawbridge sign-in', () => awaitFakeAsync((async) async {
+      addTearDown(testBinding.reset);
+      await prepareStore();
+      final loginUrl = Uri.parse('https://drawbridge.example/login?next=${Uri.encodeQueryComponent(eg.realmUrl.toString())}');
+      final signInResult = Completer<String?>();
+      drawbridgeSignIn = (realmUrl, login, {required promptFirst}) {
+        check(login).equals(loginUrl);
+        return signInResult.future;
+      };
+
+      // Drawbridge answers the POST with a plain 401, not a redirect;
+      // that must not be mistaken for an invalid API key.
+      globalStore.useCachedApiConnections = true;
+      connection.prepare(httpStatus: 401, body: 'Unauthorized\n');
+      connection.prepare(redirectedTo: loginUrl, body: '<html></html>');
+      final future = UpdateMachine.load(globalStore, eg.selfAccount.id);
+      async.elapse(Duration.zero);
+      check(connection.takeRequests()).length.equals(2);
+
+      final users = [eg.selfUser, eg.otherUser];
+      connection.prepare(json: eg.initialSnapshot(realmUsers: users).toJson());
+      signInResult.complete('new-session');
+      async.flushMicrotasks();
+      // No backoff timer: the request is made right away, with the new session.
+      check(connection.takeRequests()).single.isA<http.Request>()
+        ..url.path.equals('/api/v1/register')
+        ..headers['Cookie'].equals('$kDrawbridgeSessionCookieName=new-session');
+      final updateMachine = await future;
+      check(globalStore.getAccount(eg.selfAccount.id)).isNotNull();
+      updateMachine.debugPauseLoop();
       check(updateMachine.store.allUsers).unorderedMatches(
         users.map((expected) => (it) => it.fullName.equals(expected.fullName)));
     }));
@@ -1091,6 +1250,37 @@ void main() {
     test('reloads on handleEvent error', () {
       checkReload(prepareHandleEventError);
     });
+
+    test('retries right away after Drawbridge sign-in', () => awaitFakeAsync((async) async {
+      await preparePoll(lastEventId: 1);
+      final loginUrl = Uri.parse('https://drawbridge.example/login?next=${Uri.encodeQueryComponent(eg.realmUrl.toString())}');
+      final signInCalls = <bool>[];
+      final signInResult = Completer<String?>();
+      drawbridgeSignIn = (realmUrl, login, {required promptFirst}) {
+        check(login).equals(loginUrl);
+        signInCalls.add(promptFirst);
+        return signInResult.future;
+      };
+
+      connection.prepare(redirectedTo: loginUrl, body: '<html></html>');
+      updateMachine.debugAdvanceLoop();
+      async.elapse(Duration.zero);
+      checkLastRequest(lastEventId: 1);
+      check(signInCalls).deepEquals([true]);
+
+      connection.prepare(json: GetEventsResult(events: [
+        HeartbeatEvent(id: 2),
+      ], queueId: null).toJson());
+      signInResult.complete('new-session');
+      updateMachine.debugAdvanceLoop();
+      async.flushMicrotasks();
+      // No backoff timer: the request is made right away, with the new session.
+      check(connection.lastRequest).isNotNull().headers['Cookie']
+        .equals('$kDrawbridgeSessionCookieName=new-session');
+      checkLastRequest(lastEventId: 1, expectDontBlock: true);
+      async.elapse(Duration.zero);
+      check(updateMachine.lastEventId).equals(2);
+    }));
 
     group('abort backoff on app wake', () {
       test('abort wait in progress', () => awaitFakeAsync((async) async {

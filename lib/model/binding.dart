@@ -14,6 +14,7 @@ import 'package:package_info_plus/package_info_plus.dart' as package_info_plus;
 import 'package:sodium/sodium.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:wakelock_plus/wakelock_plus.dart' as wakelock_plus;
+import 'package:webview_flutter/webview_flutter.dart' as webview_flutter;
 
 import '../host/android_intents.dart' as android_intents_pigeon;
 import '../host/android_notifications.dart';
@@ -130,6 +131,14 @@ abstract class ZulipBinding {
   ///
   /// This wraps [url_launcher.closeInAppWebView].
   Future<void> closeInAppWebView();
+
+  /// The value of the cookie named [name] that a WebView would send to [url],
+  /// via package:webview_flutter.
+  ///
+  /// This includes HttpOnly cookies.
+  ///
+  /// This wraps [webview_flutter.WebViewCookieManager.getCookies].
+  Future<String?> getWebViewCookie(Uri url, String name);
 
   /// Provides access to the current UTC date and time.
   ///
@@ -498,6 +507,16 @@ class LiveZulipBinding extends ZulipBinding {
   @override
   Future<void> closeInAppWebView() async {
     return url_launcher.closeInAppWebView();
+  }
+
+  @override
+  Future<String?> getWebViewCookie(Uri url, String name) async {
+    final cookies = await webview_flutter.WebViewCookieManager()
+      .getCookies(domain: url);
+    for (final cookie in cookies) {
+      if (cookie.name == name) return cookie.value;
+    }
+    return null;
   }
 
   @override

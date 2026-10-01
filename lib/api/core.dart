@@ -55,6 +55,11 @@ final kServerSupportDocUrl = Uri.parse(
 /// [1]: https://github.com/dart-lang/sdk/blob/6c7452ac1530fe6161023c9b3007764ab26cc96d/sdk/lib/_internal/vm/lib/convert_patch.dart#L55
 final jsonUtf8Decoder = const Utf8Decoder().fuse(const JsonDecoder());
 
+/// The name of the cookie holding a Drawbridge session.
+///
+/// See [DrawbridgeAuthRequiredException].
+const kDrawbridgeSessionCookieName = 'drawbridge_session';
+
 /// A value for an API request parameter, to use directly without JSON encoding.
 class RawParameter {
   RawParameter(this.value);
@@ -76,6 +81,7 @@ class ApiConnection {
     required this.zulipFeatureLevel, // required even though nullable; see field doc
     String? email,
     String? apiKey,
+    this.drawbridgeCookie,
     required this._client,
     required this.useBinding,
   }) : assert((email != null) == (apiKey != null)),
@@ -89,9 +95,11 @@ class ApiConnection {
     required int? zulipFeatureLevel, // required even though nullable; see field doc
     String? email,
     String? apiKey,
+    String? Function()? drawbridgeCookie,
   }) : this(client: http.Client(),
             realmUrl: realmUrl, zulipFeatureLevel: zulipFeatureLevel,
-            email: email, apiKey: apiKey, useBinding: true);
+            email: email, apiKey: apiKey, drawbridgeCookie: drawbridgeCookie,
+            useBinding: true);
 
   final Uri realmUrl;
 
@@ -147,6 +155,27 @@ class ApiConnection {
     }
   }
 
+  /// The current Drawbridge session cookie value for the realm, if any.
+  ///
+  /// This is a callback, rather than a value,
+  /// so that a session renewed after this connection was made
+  /// gets used by it too.
+  ///
+  /// See [DrawbridgeAuthRequiredException].
+  final String? Function()? drawbridgeCookie;
+
+  /// A header carrying the Drawbridge session, if any,
+  /// for requests to the realm made outside this [ApiConnection],
+  /// like for images.
+  Map<String, String> drawbridgeCookieHeader() {
+    return _drawbridgeCookieHeader(drawbridgeCookie?.call());
+  }
+
+  static Map<String, String> _drawbridgeCookieHeader(String? value) {
+    if (value == null) return const {};
+    return {'Cookie': '$kDrawbridgeSessionCookieName=$value'};
+  }
+
   final http.Client _client;
 
   bool _isOpen = true;
@@ -170,6 +199,14 @@ class ApiConnection {
       addAuth(request);
     }
 
+    String? sentDrawbridgeCookie;
+    if (request.url.origin == realmUrl.origin) {
+      // Even without [useAuth], as for [getServerSettings]:
+      // Drawbridge turns away every request lacking its session.
+      sentDrawbridgeCookie = drawbridgeCookie?.call();
+      request.headers.addAll(_drawbridgeCookieHeader(sentDrawbridgeCookie));
+    }
+
     if (overrideUserAgent != null) {
       request.headers['User-Agent'] = overrideUserAgent;
     } else {
@@ -181,6 +218,20 @@ class ApiConnection {
       response = await _client.send(request);
     } catch (e) {
       _throwNetworkException(routeName, e);
+    }
+
+    if (response case http.BaseResponseWithUrl(url: final finalUrl)
+        when _isDrawbridgeLoginUrl(finalUrl)) {
+      // The client followed a redirect to a Drawbridge login page.
+      // (Drawbridge redirects only GET and HEAD requests;
+      // for others, see the 401 case below.)
+      try {
+        await response.stream.drain<void>();
+      } catch (_) {
+        // The body is the login page; we don't need it.
+      }
+      throw DrawbridgeAuthRequiredException(routeName: routeName,
+        loginUrl: finalUrl, rejectedCookie: sentDrawbridgeCookie);
     }
 
     final int httpStatus = response.statusCode;
@@ -212,6 +263,19 @@ class ApiConnection {
       assert(false, 'unexpected error reading response body: $e');
     }
 
+    if (httpStatus == 401 && json == null) {
+      // A Zulip server's 401 has a JSON body; this one doesn't.
+      // It may be from Drawbridge, which answers requests other than GET
+      // with a plain 401 rather than a redirect to its login page.
+      // It's important to tell: a 401 from Zulip means an invalid API key,
+      // and causes the account to be logged out.
+      final loginUrl = await _probeDrawbridgeLoginUrl(sentDrawbridgeCookie);
+      if (loginUrl != null) {
+        throw DrawbridgeAuthRequiredException(routeName: routeName,
+          loginUrl: loginUrl, rejectedCookie: sentDrawbridgeCookie);
+      }
+    }
+
     if (httpStatus != 200 || json == null) {
       throw _makeApiException(routeName, httpStatus, json);
     }
@@ -225,6 +289,33 @@ class ApiConnection {
           causeException: exception),
         stackTrace);
     }
+  }
+
+  /// Find the Drawbridge login page, if the realm is behind Drawbridge
+  /// and we lack a valid session, by making a GET request to the realm.
+  Future<Uri?> _probeDrawbridgeLoginUrl(String? cookie) async {
+    final request = http.Request('GET', realmUrl);
+    request.headers.addAll(_drawbridgeCookieHeader(cookie));
+    addUserAgent(request);
+    try {
+      final response = await _client.send(request);
+      await response.stream.drain<void>();
+      if (response case http.BaseResponseWithUrl(:final url)
+          when _isDrawbridgeLoginUrl(url)) {
+        return url;
+      }
+    } catch (e) {
+      assert(debugLog('Error probing for Drawbridge: $e'));
+    }
+    return null;
+  }
+
+  bool _isDrawbridgeLoginUrl(Uri url) {
+    if (!url.isScheme('https') || url.origin == realmUrl.origin) return false;
+    if (url.path != '/login') return false;
+    final next = Uri.tryParse(url.queryParameters['next'] ?? '');
+    return next != null && next.isScheme('https') && next.host.isNotEmpty
+      && next.origin == realmUrl.origin;
   }
 
   void close() {

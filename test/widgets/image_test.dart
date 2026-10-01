@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zulip/api/core.dart';
+import 'package:zulip/api/exception.dart';
 import 'package:zulip/api/model/initial_snapshot.dart';
 import 'package:zulip/model/binding.dart';
 import 'package:zulip/model/content.dart';
@@ -24,9 +25,20 @@ void main() {
   final authHeaders = authHeader(email: eg.selfAccount.email, apiKey: eg.selfAccount.apiKey);
 
   group('RealmContentNetworkImage', () {
-    Future<Map<String, List<String>>> actualHeaders(WidgetTester tester, Uri src) async {
+    Future<Map<String, List<String>>> actualHeaders(WidgetTester tester, Uri src, {
+      String? drawbridgeCookie,
+    }) async {
       addTearDown(testBinding.reset);
       await testBinding.globalStore.add(eg.selfAccount, eg.initialSnapshot());
+      if (drawbridgeCookie != null) {
+        testBinding.webViewCookies[eg.realmUrl.origin] = {
+          kDrawbridgeSessionCookieName: drawbridgeCookie};
+        await testBinding.globalStore.ensureDrawbridgeSession(eg.realmUrl,
+          DrawbridgeAuthRequiredException(routeName: 'someRoute',
+            loginUrl: Uri.parse('https://drawbridge.example/login'),
+            rejectedCookie: null),
+          promptFirst: false);
+      }
 
       final httpClient = prepareBoringImageHttpClient();
 
@@ -45,6 +57,24 @@ void main() {
           'Authorization': [authHeaders['Authorization']!],
           'User-Agent': [userAgentHeader()['User-Agent']!],
         });
+      debugNetworkImageHttpClientProvider = null;
+    });
+
+    testWidgets('includes Drawbridge cookie if `src` on-realm', (tester) async {
+      check(await actualHeaders(tester, Uri.parse('https://chat.example/image-db.png'),
+          drawbridgeCookie: 'session'))
+        .deepEquals({
+          'Authorization': [authHeaders['Authorization']!],
+          'Cookie': ['$kDrawbridgeSessionCookieName=session'],
+          'User-Agent': [userAgentHeader()['User-Agent']!],
+        });
+      debugNetworkImageHttpClientProvider = null;
+    });
+
+    testWidgets('excludes Drawbridge cookie if `src` off-realm', (tester) async {
+      check(await actualHeaders(tester, Uri.parse('https://other.example/image-db.png'),
+          drawbridgeCookie: 'session'))
+        .deepEquals({'User-Agent': [userAgentHeader()['User-Agent']!]});
       debugNetworkImageHttpClientProvider = null;
     });
 

@@ -163,6 +163,27 @@ class _AddAccountPageState extends State<AddAccountPage> {
     super.dispose();
   }
 
+  /// Like [GlobalStore.fetchServerSettings], but if the server
+  /// is behind a Drawbridge proxy, first has the user sign in to that.
+  ///
+  /// Completes with null if the user leaves the Drawbridge login page.
+  Future<GetServerSettingsResult?> _fetchServerSettings(
+    GlobalStore globalStore, Uri url,
+  ) async {
+    while (true) {
+      try {
+        return await globalStore.fetchServerSettings(url);
+      } on DrawbridgeAuthRequiredException catch (e) {
+        if (!mounted) return null;
+        // This may first try a stored session, which can turn out stale;
+        // then the next round has the user sign in.
+        final renewed = await globalStore.ensureDrawbridgeSession(
+          url, e, promptFirst: false);
+        if (!renewed) return null;
+      }
+    }
+  }
+
   void _onSubmitted(BuildContext context) async {
     final zulipLocalizations = ZulipLocalizations.of(context);
     final url = _parseResult.url;
@@ -182,7 +203,9 @@ class _AddAccountPageState extends State<AddAccountPage> {
       final GetServerSettingsResult serverSettings;
       try {
         final globalStore = GlobalStoreWidget.of(context);
-        serverSettings = await globalStore.fetchServerSettings(url!);
+        final result = await _fetchServerSettings(globalStore, url!);
+        if (result == null) return; // The user left the Drawbridge login page.
+        serverSettings = result;
 
         final zulipVersionData = ZulipVersionData.fromServerSettings(serverSettings);
         if (zulipVersionData.isNotAllowed) {

@@ -124,6 +124,101 @@ void main() {
         .serverSettings.realmUrl.equals(serverSettings.realmUrl);
     });
 
+    group('server behind Drawbridge', () {
+      final serverSettings = eg.serverSettings();
+      final loginUrl = Uri.parse('https://drawbridge.example.com/login?next='
+        '${Uri.encodeQueryComponent(serverSettings.realmUrl.resolve(
+          '/api/v1/server_settings').toString())}');
+
+      Future<List<bool>> attemptWithSignIn(WidgetTester tester, {
+        required String? signInResult,
+      }) async {
+        final signInCalls = <bool>[];
+        drawbridgeSignIn = (realmUrl, login, {required promptFirst}) async {
+          check(realmUrl).equals(serverSettings.realmUrl);
+          check(login).equals(loginUrl);
+          signInCalls.add(promptFirst);
+          // The first connection was closed; the retry gets a fresh one.
+          connection = testBinding.globalStore.apiConnection(
+            realmUrl: serverSettings.realmUrl, zulipFeatureLevel: null);
+          if (signInResult != null) {
+            connection.prepare(json: serverSettings.toJson());
+          }
+          return signInResult;
+        };
+
+        await tester.enterText(find.byType(TextField),
+          serverSettings.realmUrl.toString());
+        testBinding.globalStore.useCachedApiConnections = true;
+        testBinding.globalStore.apiConnection(
+          realmUrl: serverSettings.realmUrl, zulipFeatureLevel: null,
+        ).prepare(redirectedTo: loginUrl, body: '<html></html>');
+        await tester.tap(find.text('Continue'));
+        await tester.pump(Duration.zero);
+        return signInCalls;
+      }
+
+      testWidgets('sign in, then continue', (tester) async {
+        await prepare(tester);
+        check(await attemptWithSignIn(tester, signInResult: 'new-session'))
+          .deepEquals([false]);
+        check(connection.takeRequests()).single.headers['Cookie']
+          .equals('$kDrawbridgeSessionCookieName=new-session');
+        checkNoDialog(tester);
+        check(takePushedRoutes()).single.isA<WidgetRoute>().page.isA<LoginPage>()
+          .serverSettings.realmUrl.equals(serverSettings.realmUrl);
+      });
+
+      testWidgets('stale stored session: sign in, then continue', (tester) async {
+        await prepare(tester);
+        testBinding.webViewCookies[serverSettings.realmUrl.origin] = {
+          kDrawbridgeSessionCookieName: 'stale'};
+        final signInCalls = <bool>[];
+        drawbridgeSignIn = (realmUrl, login, {required promptFirst}) async {
+          signInCalls.add(promptFirst);
+          connection = testBinding.globalStore.apiConnection(
+            realmUrl: serverSettings.realmUrl, zulipFeatureLevel: null);
+          connection.prepare(json: serverSettings.toJson());
+          return 'new-session';
+        };
+
+        // The stored session is tried first, and turned away too.
+        FakeApiConnection? staleConnection;
+        testBinding.onGetWebViewCookie = () {
+          if (staleConnection != null) return;
+          staleConnection = testBinding.globalStore.apiConnection(
+            realmUrl: serverSettings.realmUrl, zulipFeatureLevel: null)
+            ..prepare(redirectedTo: loginUrl, body: '<html></html>');
+        };
+
+        await tester.enterText(find.byType(TextField),
+          serverSettings.realmUrl.toString());
+        testBinding.globalStore.useCachedApiConnections = true;
+        testBinding.globalStore.apiConnection(
+          realmUrl: serverSettings.realmUrl, zulipFeatureLevel: null,
+        ).prepare(redirectedTo: loginUrl, body: '<html></html>');
+        await tester.tap(find.text('Continue'));
+        await tester.pump(Duration.zero);
+        check(staleConnection!.takeRequests()).single.headers['Cookie']
+          .equals('$kDrawbridgeSessionCookieName=stale');
+
+        check(signInCalls).deepEquals([false]);
+        check(connection.takeRequests()).single.headers['Cookie']
+          .equals('$kDrawbridgeSessionCookieName=new-session');
+        checkNoDialog(tester);
+        check(takePushedRoutes()).single.isA<WidgetRoute>().page.isA<LoginPage>()
+          .serverSettings.realmUrl.equals(serverSettings.realmUrl);
+      });
+
+      testWidgets('leave sign-in page: no error', (tester) async {
+        await prepare(tester);
+        check(await attemptWithSignIn(tester, signInResult: null))
+          .deepEquals([false]);
+        checkNoDialog(tester);
+        check(takePushedRoutes()).isEmpty();
+      });
+    });
+
     testWidgets('Server too old, well-formed response', (tester) async {
       await prepare(tester);
 

@@ -1,5 +1,28 @@
 # Zulip Flutter
 
+> [!NOTE]
+> **This is an unofficial fork** of [zulip/zulip-flutter][upstream].
+> It adds support for Zulip servers behind a
+> [Drawbridge](https://github.com/CoreInfraAI/drawbridge) proxy,
+> which requires a WebAuthn passkey login before any request
+> reaches the server.
+> The changes live on the `drawbridge-support` branch,
+> rebased onto the latest upstream release.
+>
+> Download the Android APK from [this fork's releases][fork-releases].
+> Drawbridge sign-in needs Android 14 or later; iOS is not supported.
+>
+> These APKs are signed with this fork's own key,
+> not the official Zulip key.
+> So they can't be installed as an update over the official app
+> from Google Play or from upstream's releases:
+> uninstall that first.
+>
+> For everything else, use the official app and repository.
+
+[upstream]: https://github.com/zulip/zulip-flutter
+[fork-releases]: https://github.com/razmser/zulip-flutter/releases/latest
+
 The official Zulip app for Android and iOS, built with Flutter.
 
 This app [was launched][] as the main Zulip mobile app
